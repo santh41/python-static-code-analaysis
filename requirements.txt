@@ -1,0 +1,9 @@
+Django
+gitpython
+pylint
+bandit
+lizard
+radon
+matplotlib
+pandas
+openpyxl

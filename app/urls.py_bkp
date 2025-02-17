@@ -1,0 +1,7 @@
+from django.urls import path
+from .views import analyze_repo
+
+urlpatterns = [
+    path("", analyze_repo, name="home"),  # Add this as the default route
+    path("analyze/", analyze_repo, name="analyze"),
+]

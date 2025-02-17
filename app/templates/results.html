@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Analysis Results - {{ repo_name }}</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 20px;
+        }
+        h2 {
+            color: #333;
+        }
+        .chart-container {
+            width: 50%;
+            margin: auto;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            margin-top: 20px;
+            font-size: 16px;
+            text-decoration: none;
+            color: white;
+            background-color: #007bff;
+            border-radius: 5px;
+        }
+        .btn:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h2>Analysis Results for {{ repo_name }}</h2>
+
+    <div class="chart-container">
+        <canvas id="analysisChart"></canvas>
+    </div>
+
+    <!-- Download CSV Report Button -->
+    <a href="{% url 'download_csv' %}" class="btn">Download CSV Report</a>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            var ctx = document.getElementById('analysisChart').getContext('2d');
+
+            var results = [
+                {{ results.0.1|length }},
+                {{ results.1.1|length }},
+                {{ results.2.1|length }},
+                {{ results.3.1|length }}
+            ];
+
+            // Ensure chart renders only if data exists
+            if (results.some(value => value > 0)) {
+                new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: ["Pylint", "Bandit", "Lizard", "Radon"],
+                        datasets: [{
+                            data: results,
+                            backgroundColor: ['red', 'blue', 'green', 'orange']
+                        }]
+                    }
+                });
+            } else {
+                document.querySelector(".chart-container").innerHTML = "<p>No issues found in the analysis.</p>";
+            }
+        });
+    </script>
+</body>
+</html>

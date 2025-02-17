@@ -1,0 +1,5 @@
+<form action="{% url 'analyze' %}" method="post">
+    {% csrf_token %}
+    <input type="text" name="github_url" placeholder="Enter GitHub Repo URL" required>
+    <button type="submit">Analyze</button>
+</form>

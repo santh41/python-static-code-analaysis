@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Analysis Results</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h2>Analysis Results for {{ repo_name }}</h2>
+    <canvas id="analysisChart"></canvas>
+    
+    <script>
+        var ctx = document.getElementById('analysisChart').getContext('2d');
+        var chart = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: ["Pylint", "Bandit", "Lizard", "Radon"],
+                datasets: [{
+                    data: [{{ results.0.1|length }}, {{ results.1.1|length }}, {{ results.2.1|length }}, {{ results.3.1|length }}],
+                    backgroundColor: ['red', 'blue', 'green', 'orange']
+                }]
+            }
+        });
+    </script>
+</body>
+</html>
