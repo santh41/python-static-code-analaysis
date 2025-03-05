@@ -1,0 +1,343 @@
+import csv
+import json
+from django.http import HttpResponse
+from django.shortcuts import render
+from .models import AnalysisResult
+from .forms import GitHubURLForm
+from .utils.github_clone import clone_repo
+from .analysis.bandit_analysis import run_bandit_analysis
+from .analysis.lizard_analysis import run_lizard_analysis
+from .analysis.pylint_analysis import run_pylint_analysis
+from .analysis.radon_analysis import run_radon_analysis
+from collections import defaultdict
+import os
+import pandas as pd
+from io import BytesIO
+import datetime
+def analyze_repo(request):
+    if request.method == "POST":
+        form = GitHubURLForm(request.POST)
+        if form.is_valid():
+            repo_url = form.cleaned_data["github_url"]
+            repo_path = clone_repo(repo_url)
+
+            analysis_results = [
+                ("Pylint", run_pylint_analysis(repo_path)),
+                ("Bandit", run_bandit_analysis(repo_path)),
+                ("Lizard", run_lizard_analysis(repo_path)),
+                ("Radon", run_radon_analysis(repo_path)),
+            ]
+
+            repo_name = repo_url.split("/")[-1]
+            for tool, result in analysis_results:
+                AnalysisResult.objects.create(repo_name=repo_name, analysis_type=tool, issue_count=len(result), details=json.dumps(result))
+
+            return render(request, "results.html", {"repo_name": repo_name, "results": analysis_results})
+    else:
+        form = GitHubURLForm()
+    return render(request, "index.html", {"form": form})
+"""
+def download_csv(request):
+    repo_name = request.GET.get('repo_name')
+    if not repo_name:
+        return HttpResponse("Error: Repository name is required.", status=400)
+
+    # Fetch data from the database
+    results = AnalysisResult.objects.filter(repo_name=repo_name)
+
+    if not results.exists():
+        return HttpResponse("No analysis results found for this repository.", status=404)
+
+    # Data storage for different sheets
+    summary_data = {}
+    pylint_data = []
+    radon_data = []
+    lizard_data = []
+    bandit_data = []
+
+    # Process results
+    for result in results:
+        module = result.analysis_type
+        issue_count = result.issue_count
+        details = result.details
+
+        # **Summary Sheet (Total Issues Per Module)**
+        if module in summary_data:
+            summary_data[module] += issue_count
+        else:
+            summary_data[module] = issue_count
+
+        # Ensure details are stored as text instead of JSON
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)  # Convert JSON string to dict
+            except json.JSONDecodeError:
+                pass  # Keep details as string if it's not valid JSON
+
+        # Convert details to text format (Flatten JSON)
+        def flatten_detail(detail):
+            if isinstance(detail, dict):
+                return "; ".join([f"{key}: {value}" for key, value in detail.items()])
+            elif isinstance(detail, list):
+                return " | ".join([flatten_detail(item) for item in detail])
+            return str(detail)
+
+        if module == "Pylint":
+            if isinstance(details, list):
+                for item in details:
+                    pylint_data.append({
+                        "File Path": item.get("path", "N/A"),
+                        "Line Number": item.get("line", "N/A"),
+                        "Column": item.get("column", "N/A"),
+                        "Error Message": item.get("message", "N/A"),
+                        "Type": item.get("type", "N/A"),
+                    })
+
+        elif module == "Radon":
+            if isinstance(details, list):
+                for item in details:
+                    radon_data.append({
+                        "File Path": item.get("path", "N/A"),
+                        "Function Name": item.get("name", "N/A"),
+                        "Complexity": item.get("complexity", "N/A"),
+                        "Rank": item.get("rank", "N/A"),
+                        "Start Line": item.get("lineno", "N/A"),
+                        "End Line": item.get("endLine", "N/A"),
+                    })
+
+        elif module == "Lizard":
+            if isinstance(details, list):
+                for item in details:
+                    lizard_data.append({
+                        "File Path": item.get("path", "N/A"),
+                        "Function Name": item.get("name", "N/A"),
+                        "Cyclomatic Complexity": item.get("complexity", "N/A"),
+                        "Length": item.get("length", "N/A"),
+                    })
+
+        elif module == "Bandit":
+            if isinstance(details, list):
+                for item in details:
+                    bandit_data.append({
+                        "File Path": item.get("path", "N/A"),
+                        "Issue": item.get("issue_text", "N/A"),
+                        "Severity": item.get("SEVERITY.HIGH", "N/A"),
+                        "Confidence": item.get("CONFIDENCE.HIGH", "N/A"),
+                        "Line Number": item.get("line", "N/A"),
+                    })
+
+    # Create an Excel file with multiple sheets
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine="xlsxwriter")
+
+    # **Sheet1: Summary**
+    summary_df = pd.DataFrame(summary_data.items(), columns=["Module", "Total Issues"])
+    summary_df.to_excel(writer, sheet_name="Summary", index=False)
+
+    # **Sheet2: Pylint (if data exists)**
+    if pylint_data:
+        pylint_df = pd.DataFrame(pylint_data)
+        pylint_df.to_excel(writer, sheet_name="Pylint", index=False)
+
+    # **Sheet3: Radon (if data exists)**
+    if radon_data:
+        radon_df = pd.DataFrame(radon_data)
+        radon_df.to_excel(writer, sheet_name="Radon", index=False)
+
+    # **Sheet4: Lizard (if data exists)**
+    if lizard_data:
+        lizard_df = pd.DataFrame(lizard_data)
+        lizard_df.to_excel(writer, sheet_name="Lizard", index=False)
+
+    # **Sheet5: Bandit (if data exists)**
+    if bandit_data:
+        bandit_df = pd.DataFrame(bandit_data)
+        bandit_df.to_excel(writer, sheet_name="Bandit", index=False)
+
+    writer.close()
+    output.seek(0)
+
+    # Send response as an Excel file
+    response = HttpResponse(output.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = f'attachment; filename="analysis_report_{repo_name}_{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}.xlsx"'
+    return response
+
+
+
+def download_csv(request):
+    repo_name = request.GET.get("repo_name")
+    if not repo_name:
+        return HttpResponse("Error: Repository name is required.", status=400)
+
+    results = AnalysisResult.objects.filter(repo_name=repo_name)
+
+    if not results.exists():
+        return HttpResponse("No analysis results found for this repository.", status=404)
+
+    # **Store data for different sheets**
+    summary_data = {}
+    pylint_data, radon_data, lizard_data, bandit_data = [], [], [], []
+
+    # **Process database results**
+    for result in results:
+        module = result.analysis_type
+        issue_count = result.issue_count
+        details = result.details
+
+        # **Update Summary Sheet**
+        summary_data[module] = summary_data.get(module, 0) + issue_count
+
+        # **Convert details JSON to readable format**
+        try:
+            details = json.loads(details) if isinstance(details, str) else details
+        except json.JSONDecodeError:
+            details = None  # If JSON decoding fails, ignore
+
+        if not details:
+            continue
+
+        # **Flatten JSON for readable CSV**
+        def flatten_detail(detail):
+            if isinstance(detail, dict):
+                return "; ".join([f"{key}: {value}" for key, value in detail.items()])
+            elif isinstance(detail, list):
+                return " | ".join([flatten_detail(item) for item in detail])
+            return str(detail)
+
+        # **Separate data into relevant sheets**
+        if module == "Pylint" and isinstance(details, list):
+            for item in details:
+                pylint_data.append({
+                    "File Path": item.get("path", "N/A"),
+                    "Line Number": item.get("line", "N/A"),
+                    "Column": item.get("column", "N/A"),
+                    "Error Message": item.get("message", "N/A"),
+                    "Type": item.get("type", "N/A"),
+                })
+
+        elif module == "Radon" and isinstance(details, list):
+            for item in details:
+                radon_data.append({
+                    "File Path": item.get("path", "N/A"),
+                    "Function Name": item.get("name", "N/A"),
+                    "Complexity": item.get("complexity", "N/A"),
+                    "Rank": item.get("rank", "N/A"),
+                    "Start Line": item.get("lineno", "N/A"),
+                    "End Line": item.get("endLine", "N/A"),
+                })
+
+        elif module == "Lizard" and isinstance(details, list):
+            for item in details:
+                lizard_data.append({
+                    "File Path": item.get("path", "N/A"),
+                    "Function Name": item.get("name", "N/A"),
+                    "Cyclomatic Complexity": item.get("complexity", "N/A"),
+                    "Length": item.get("length", "N/A"),
+                })
+
+        elif module == "Bandit" and isinstance(details, list):
+            for item in details:
+                bandit_data.append({
+                    "File Path": item.get("path", "N/A"),
+                    "Issue": item.get("issue_text", "N/A"),
+                    "Severity": item.get("SEVERITY.HIGH", "N/A"),
+                    "Confidence": item.get("CONFIDENCE.HIGH", "N/A"),
+                    "Line Number": item.get("line", "N/A"),
+                })
+
+    # **Write Data to Excel**
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine="xlsxwriter")
+
+    # **Summary Sheet**
+    summary_df = pd.DataFrame(summary_data.items(), columns=["Module", "Total Issues"])
+    summary_df.to_excel(writer, sheet_name="Summary", index=False)
+
+    # **Write Each Module's Data to Separate Sheets**
+    if pylint_data:
+        pd.DataFrame(pylint_data).to_excel(writer, sheet_name="Pylint", index=False)
+
+    if radon_data:
+        pd.DataFrame(radon_data).to_excel(writer, sheet_name="Radon", index=False)
+
+    if lizard_data:
+        pd.DataFrame(lizard_data).to_excel(writer, sheet_name="Lizard", index=False)
+
+    if bandit_data:
+        pd.DataFrame(bandit_data).to_excel(writer, sheet_name="Bandit", index=False)
+
+    writer.close()
+    output.seek(0)
+
+    # **Return Response as Downloadable File**
+    response = HttpResponse(output.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = f'attachment; filename="analysis_report_{repo_name}_{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}.xlsx"'
+    return response
+"""
+def flatten_detail(detail):
+    """Ensures JSON details are correctly formatted for CSV."""
+    if isinstance(detail, dict):
+        return "; ".join([f"{key}: {value}" for key, value in detail.items()])
+    elif isinstance(detail, list):
+        return " | ".join([flatten_detail(item) for item in detail])
+    return str(detail)
+
+def generate_csv():
+    """Generate a multi-sheet CSV report with summary and detailed analysis."""
+    modules = ['Pylint', 'Bandit', 'Lizard', 'Radon']
+    summary_data = {}
+    detailed_data = {module: [] for module in modules}
+    
+    results = AnalysisResult.objects.all()
+    
+    for result in results:
+        module = result.analysis_type
+        if module not in modules:
+            continue
+        
+        try:
+            details = json.loads(result.details) if isinstance(result.details, str) else result.details
+        except json.JSONDecodeError:
+            continue  # Ignore invalid JSON
+        
+        # Skip Pylint errors related to missing files
+        if module == "Pylint" and "Unable to load file" in result.details:
+            continue
+        
+        # Store summary with unique file paths
+        if module not in summary_data:
+            summary_data[module] = set()
+        summary_data[module].add(result.repository)
+        
+        # Prepare detailed data
+        detailed_data[module].append({
+            "File Path": result.repository,
+            "Line Number": result.issue_count,  # Update based on actual model field
+            "Details": flatten_detail(details),
+            "Created At": result.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+        })
+    
+    # Convert summary to DataFrame
+    summary_df = pd.DataFrame([{ "Module": mod, "Total Issues": len(summary_data[mod])} for mod in summary_data])
+    
+    # Create an Excel writer object
+    file_path = "/var/tmp/code_analysis_report.xlsx"
+    with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
+        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+        
+        for module, data in detailed_data.items():
+            if data:
+                df = pd.DataFrame(data)
+                df.to_excel(writer, sheet_name=module, index=False)
+    
+    return file_path
+
+def download_csv(request):
+    """Django view to generate and download the CSV."""
+    file_path = generate_csv()
+    
+    with open(file_path, 'rb') as f:
+        response = HttpResponse(f.read(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = f'attachment; filename="code_analysis_report.xlsx"'
+    return response
+

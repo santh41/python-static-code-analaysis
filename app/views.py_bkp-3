@@ -1,0 +1,60 @@
+import csv
+import json
+from django.http import HttpResponse
+from django.shortcuts import render
+from .models import AnalysisResult
+from .forms import GitHubURLForm
+from .utils.github_clone import clone_repo
+from .analysis.bandit_analysis import run_bandit_analysis
+from .analysis.lizard_analysis import run_lizard_analysis
+from .analysis.pylint_analysis import run_pylint_analysis
+from .analysis.radon_analysis import run_radon_analysis
+from collections import defaultdict
+import os
+def analyze_repo(request):
+    if request.method == "POST":
+        form = GitHubURLForm(request.POST)
+        if form.is_valid():
+            repo_url = form.cleaned_data["github_url"]
+            repo_path = clone_repo(repo_url)
+
+            analysis_results = [
+                ("Pylint", run_pylint_analysis(repo_path)),
+                ("Bandit", run_bandit_analysis(repo_path)),
+                ("Lizard", run_lizard_analysis(repo_path)),
+                ("Radon", run_radon_analysis(repo_path)),
+            ]
+
+            repo_name = repo_url.split("/")[-1]
+            for tool, result in analysis_results:
+                AnalysisResult.objects.create(repo_name=repo_name, analysis_type=tool, issue_count=len(result), details=json.dumps(result))
+
+            return render(request, "results.html", {"repo_name": repo_name, "results": analysis_results})
+    else:
+        form = GitHubURLForm()
+
+    return render(request, "index.html", {"form": form})
+def download_csv(request):
+    repo_name = request.GET.get("repo_name")  # Get repo_name from query params
+    if not repo_name:
+        return HttpResponse("Error: Repository name is required.", status=400)
+
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = f'attachment; filename="{repo_name}_analysis_report.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow(["Repository Name", "Module/File", "Analysis Type", "Issue Count", "Details", "Created At"])
+
+    # ✅ Fix: Use "repo_name" instead of "repository"
+    results = AnalysisResult.objects.filter(repo_name=repo_name)
+
+    for result in results:
+        writer.writerow([
+            result.repo_name,
+            result.analysis_type,
+            result.issue_count,
+            result.details,
+            result.created_at
+        ])
+
+    return response

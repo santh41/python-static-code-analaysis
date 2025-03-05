@@ -39,8 +39,8 @@
     </div>
 
     <!-- Download CSV Report Button -->
-    <a href="{% url 'download_csv' %}" class="btn">Download CSV Report</a>
-
+<!--    <a href="{% url 'download_csv' %}" class="btn">Download CSV Report</a> -->
+    <a href="{% url 'download_csv' %}?repo_name={{ repo_name }}" class="btn btn-primary">Download CSV Report</a>
     <script>
         document.addEventListener("DOMContentLoaded", function() {
             var ctx = document.getElementById('analysisChart').getContext('2d');
